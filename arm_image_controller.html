@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gesture Controlled Robotic Arm</title>
+
+  <!-- TensorFlow + Teachable Machine IMAGE library -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    :root {
+      --bg:     #0f172a;
+      --panel:  #1e293b;
+      --border: #334155;
+      --accent: #a78bfa;   /* purple — different from audio version */
+      --blue:   #38bdf8;
+      --green:  #4ade80;
+      --yellow: #fbbf24;
+      --red:    #f87171;
+      --muted:  #64748b;
+      --text:   #e2e8f0;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    header { text-align: center; margin-bottom: 22px; }
+    header h1 { font-size: 24px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+    header p  { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+    /* Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 18px;
+      align-items: start;
+      max-width: 1060px;
+      margin: 0 auto;
+    }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+    /* Cards */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Buttons */
+    button {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter 0.15s, transform 0.1s;
+    }
+    button:hover  { filter: brightness(1.12); }
+    button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+
+    .btn-accent  { background: var(--accent); color: #0f172a; }
+    .btn-blue    { background: var(--blue);   color: #0f172a; }
+    .btn-warn    { background: var(--yellow); color: #0f172a; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 7px; }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-off  { background:#1e293b; color:var(--muted);   border:1px solid var(--border); }
+    .badge-ok   { background:#052e16; color:var(--green);   border:1px solid #166534; }
+    .badge-warn { background:#422006; color:var(--yellow);  border:1px solid #92400e; }
+    .badge-err  { background:#2d0a0a; color:var(--red);     border:1px solid #7f1d1d; }
+    .badge-run  { background:#1e1033; color:var(--accent);  border:1px solid #6d28d9; }
+
+    /* Row helpers */
+    .row { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+
+    /* Webcam area */
+    .cam-wrap {
+      position: relative;
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      width: 100%;
+      aspect-ratio: 4/3;
+      margin-bottom: 10px;
+      border: 2px solid var(--border);
+    }
+    .cam-wrap.active { border-color: var(--accent); }
+    #webcam-canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Detected label overlay */
+    .cam-overlay {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 8px 12px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.85));
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .cam-label {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+    }
+    .cam-conf {
+      font-family: monospace;
+      font-size: 13px;
+      color: var(--green);
+    }
+
+    /* Frame indicator dots */
+    .frame-dots {
+      display: flex;
+      gap: 5px;
+      margin-bottom: 10px;
+      height: 8px;
+    }
+    .frame-dot {
+      flex: 1;
+      height: 8px;
+      border-radius: 4px;
+      background: var(--border);
+      transition: background 0.1s;
+    }
+    .frame-dot.filled { background: var(--accent); }
+
+    /* Confidence bars */
+    .bar-item { margin-bottom: 8px; }
+    .bar-header { display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px; }
+    .bar-label  { color:var(--text); }
+    .bar-pct    { font-family:monospace; color:var(--muted); }
+    .bar-track  { height:6px; background:var(--border); border-radius:6px; overflow:hidden; }
+    .bar-fill   { height:100%; width:0%; border-radius:6px; background:var(--muted); transition:width 0.1s ease; }
+    .bar-fill.active { background: var(--accent); }
+
+    /* Threshold slider */
+    .slider-row {
+      display:flex; align-items:center; gap:10px;
+      font-size:11px; color:var(--muted); margin-bottom:10px;
+    }
+    .slider-row input[type=range] { flex:1; accent-color:var(--accent); }
+    .slider-row span { font-family:monospace; min-width:36px; color:var(--text); }
+
+    /* Mapping table */
+    .map-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .map-table th {
+      text-align:left; color:var(--muted); font-size:10px;
+      padding:4px 6px; border-bottom:1px solid var(--border);
+    }
+    .map-table td { padding:6px 6px; border-bottom:1px solid #1a2235; vertical-align:middle; }
+    .map-table tr.detected td { background:rgba(167,139,250,0.08); }
+    .map-table select {
+      background:var(--bg); border:1px solid var(--border);
+      color:var(--text); font-size:11px;
+      padding:4px 6px; border-radius:6px; width:100%;
+    }
+    .class-thumb {
+      width:28px; height:28px; border-radius:5px;
+      border:1px solid var(--border);
+      object-fit:cover; vertical-align:middle;
+    }
+
+    /* Servo grid */
+    .servo-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;
+    }
+    .servo-card {
+      background:var(--bg);
+      border:1px solid var(--border);
+      border-radius:11px;
+      padding:10px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .servo-card.active-cmd {
+      border-color:var(--accent);
+      box-shadow:0 0 0 1px var(--accent);
+    }
+    .servo-name { font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); margin-bottom:1px; }
+    .servo-pin  { font-size:9px; color:var(--muted); margin-bottom:6px; }
+    .servo-angle { font-size:28px; font-weight:700; font-family:monospace; line-height:1; margin-bottom:6px; }
+    .servo-angle span { font-size:12px; color:var(--muted); }
+    .servo-bar-track { height:4px; background:var(--border); border-radius:4px; margin-bottom:6px; overflow:hidden; }
+    .servo-bar-fill  { height:100%; background:var(--blue); border-radius:4px; transition:width 0.25s; }
+    .servo-btn-row   { display:flex; gap:4px; }
+    .servo-btn-row button { flex:1; font-size:10px; padding:4px; border-radius:6px; }
+
+    /* Manual control */
+    .manual-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+    .btn-group   { display:flex; flex-direction:column; gap:4px; }
+    .btn-group .lbl { font-size:9px; color:var(--muted); text-align:center; letter-spacing:1px; margin-bottom:1px; }
+
+    /* Log */
+    .log-box { height:110px; overflow-y:auto; font-family:monospace; font-size:11px; line-height:1.7; }
+    .log-row { display:flex; gap:8px; }
+    .log-time{ color:var(--muted); min-width:58px; }
+    .log-msg { color:var(--text); }
+    .log-ok  { color:var(--green); }
+    .log-warn{ color:var(--yellow); }
+    .log-err { color:var(--red); }
+
+    .placeholder { color:var(--muted); text-align:center; padding:16px 0; font-size:12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Gesture Controlled Robotic Arm</h1>
+  <p>Google Teachable Machine Image · Webcam · Arduino Leonardo · Web Serial</p>
+</header>
+
+<div class="grid">
+
+  <!-- ══ LEFT COLUMN ══ -->
+  <div>
+
+    <!-- Arduino connection -->
+    <div class="card">
+      <div class="card-title">Arduino Connection</div>
+      <div class="row">
+        <button class="btn-blue" id="conn-btn" onclick="toggleSerial()">🔌 Connect Arduino</button>
+        <span class="badge badge-off" id="conn-badge">Disconnected</span>
+      </div>
+      <p style="font-size:11px;color:var(--muted)">Select your Leonardo port (COM / /dev/ttyACM0) · Chrome or Edge only</p>
+    </div>
+
+    <!-- Webcam + model -->
+    <div class="card">
+      <div class="card-title">Webcam / Gesture Camera</div>
+      <div class="cam-wrap" id="cam-wrap">
+        <canvas id="webcam-canvas"></canvas>
+        <div class="cam-overlay">
+          <span class="cam-label" id="cam-label">—</span>
+          <span class="cam-conf"  id="cam-conf"></span>
+        </div>
+      </div>
+
+      <!-- Frame confirmation dots -->
+      <div class="frame-dots" id="frame-dots"></div>
+
+      <div class="row">
+        <button class="btn-accent" id="cam-btn" onclick="toggleCamera()">📷 Start Camera</button>
+        <span class="badge badge-off" id="cam-badge">Off</span>
+      </div>
+
+      <div class="slider-row">
+        <span>Confidence threshold</span>
+        <input type="range" id="thresh" min="40" max="99" value="80" step="1">
+        <span id="thresh-val">80%</span>
+      </div>
+      <div class="slider-row">
+        <span>Confirm frames</span>
+        <input type="range" id="cf-slider" min="1" max="8" value="3" step="1">
+        <span id="cf-val">3</span>
+      </div>
+
+      <!-- Per-class confidence bars -->
+      <div id="class-bars"><div class="placeholder">Start camera to see confidence bars</div></div>
+    </div>
+
+    <!-- Mapping -->
+    <div class="card">
+      <div class="card-title">Gesture → Command Mapping</div>
+      <div id="map-area"><div class="placeholder">Load model to configure</div></div>
+    </div>
+
+  </div>
+
+  <!-- ══ RIGHT COLUMN ══ -->
+  <div>
+
+    <!-- Servo positions -->
+    <div class="card">
+      <div class="card-title">Servo Positions</div>
+      <div class="servo-grid" id="servo-grid"></div>
+      <button class="btn-warn" style="width:100%;margin-top:4px" onclick="sendCmd('H')">🏠 Home All (90°)</button>
+    </div>
+
+    <!-- Manual control -->
+    <div class="card">
+      <div class="card-title">Manual Control</div>
+      <div class="manual-grid">
+        <div class="btn-group">
+          <div class="lbl">BASE</div>
+          <button class="btn-outline btn-sm" onclick="sendCmd('L')">◀ Left</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('R')">Right ▶</button>
+        </div>
+        <div class="btn-group">
+          <div class="lbl">SHOULDER</div>
+          <button class="btn-outline btn-sm" onclick="sendCmd('U')">▲ Up</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('D')">▼ Down</button>
+        </div>
+        <div class="btn-group">
+          <div class="lbl">ELBOW</div>
+          <button class="btn-outline btn-sm" onclick="sendCmd('F')">▲ Fwd</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('B')">▼ Back</button>
+        </div>
+        <div class="btn-group">
+          <div class="lbl">CLAW</div>
+          <button class="btn-outline btn-sm" onclick="sendCmd('O')">↔ Open</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('C')">↕ Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity log -->
+    <div class="card">
+      <div class="card-title">Activity Log</div>
+      <div class="log-box" id="log"></div>
+    </div>
+
+  </div>
+
+</div><!-- /.grid -->
+
+<script>
+// ══════════════════════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════════════════════
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/KJo0ENbTZ/";
+
+// All possible actions the user can assign to any gesture class
+const ACTIONS = {
+  none:          { label: "— None —",          cmd: null },
+  claw_open:     { label: "Claw → Open",        cmd: 'O' },
+  claw_close:    { label: "Claw → Close",       cmd: 'C' },
+  shoulder_up:   { label: "Shoulder ↑ Up",      cmd: 'U' },
+  shoulder_down: { label: "Shoulder ↓ Down",    cmd: 'D' },
+  elbow_fwd:     { label: "Elbow ↑ Forward",    cmd: 'F' },
+  elbow_back:    { label: "Elbow ↓ Backward",   cmd: 'B' },
+  base_left:     { label: "Base ← Left",        cmd: 'L' },
+  base_right:    { label: "Base → Right",       cmd: 'R' },
+  home_all:      { label: "🏠 Home All",         cmd: 'H' },
+};
+
+// Keyword → action auto-mapping (checks class label names)
+const KW_MAP = {
+  open:     'claw_open',   close:    'claw_close',
+  grab:     'claw_close',  release:  'claw_open',
+  grip:     'claw_close',  drop:     'claw_open',
+  up:       'shoulder_up', down:     'shoulder_down',
+  raise:    'shoulder_up', lower:    'shoulder_down',
+  forward:  'elbow_fwd',   back:     'elbow_back',
+  backward: 'elbow_back',  fwd:      'elbow_fwd',
+  left:     'base_left',   right:    'base_right',
+  home:     'home_all',    reset:    'home_all',
+  stop:     'none',        idle:     'none',
+  nothing:  'none',        noise:    'none',
+};
+
+// Servo display state
+const SERVOS = {
+  claw:     { label:"Claw",     pin:9,  angle:90 },
+  elbow:    { label:"Elbow",    pin:10, angle:90 },
+  shoulder: { label:"Shoulder", pin:11, angle:90 },
+  base:     { label:"Base",     pin:12, angle:90 },
+};
+
+// ══════════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════════
+let port = null, writer = null;
+let model = null, webcam = null;
+let isRunning = false;
+let labels  = [];
+let cmdMap  = {};           // label index → action key
+let CONFIRM_FRAMES = 3;
+let accumIdx   = -1;
+let accumCount =  0;
+const COOLDOWN_MS = 1800;
+const cooldown = {};
+
+// ══════════════════════════════════════════════════════════════
+//  WEB SERIAL
+// ══════════════════════════════════════════════════════════════
+async function toggleSerial() {
+  port ? await closeSerial() : await openSerial();
+}
+
+async function openSerial() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    writer = port.writable.getWriter();
+    setBadge('conn', 'ok', 'Connected');
+    document.getElementById('conn-btn').textContent = '🔌 Disconnect';
+    log('Arduino connected', 'ok');
+    startReadLoop();
+  } catch (e) {
+    port = null;
+    setBadge('conn', 'err', 'Error');
+    log('Serial error: ' + e.message, 'err');
+  }
+}
+
+async function closeSerial() {
+  try {
+    if (writer) { writer.releaseLock(); writer = null; }
+    if (port)   { await port.close();   port = null;   }
+  } catch {}
+  setBadge('conn', 'off', 'Disconnected');
+  document.getElementById('conn-btn').textContent = '🔌 Connect Arduino';
+  log('Arduino disconnected', 'warn');
+}
+
+async function startReadLoop() {
+  const decoder = new TextDecoderStream();
+  port.readable.pipeTo(decoder.writable).catch(() => {});
+  const reader = decoder.readable.getReader();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const t = line.trim();
+        if (t.startsWith('POS:')) parsePOS(t.slice(4));
+        else if (t === 'READY') log('Arduino ready ✓', 'ok');
+      }
+    }
+  } catch {}
+}
+
+function parsePOS(s) {
+  const parts = s.split(',').map(Number);
+  ['claw','elbow','shoulder','base'].forEach((k, i) => {
+    if (!isNaN(parts[i])) { SERVOS[k].angle = parts[i]; refreshServoUI(k); }
+  });
+}
+
+async function sendCmd(char) {
+  if (!port) { log('Connect Arduino first!', 'warn'); return; }
+  try {
+    await writer.write(new TextEncoder().encode(char));
+    const name = Object.values(ACTIONS).find(a => a.cmd === char)?.label || char;
+    log('▶ ' + name, 'ok');
+    const map = { O:['claw'], C:['claw'], U:['shoulder'], D:['shoulder'],
+                  F:['elbow'], B:['elbow'], L:['base'], R:['base'],
+                  H:['claw','elbow','shoulder','base'] };
+    (map[char] || []).forEach(flashCard);
+  } catch (e) { log('Send error: ' + e.message, 'err'); }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TEACHABLE MACHINE IMAGE
+// ══════════════════════════════════════════════════════════════
+async function toggleCamera() {
+  isRunning ? await stopCamera() : await startCamera();
+}
+
+async function startCamera() {
+  const btn = document.getElementById('cam-btn');
+  btn.textContent = '⏳ Loading model…';
+  btn.disabled = true;
+
+  try {
+    // Load TM image model
+    model = await tmImage.load(MODEL_URL + 'model.json', MODEL_URL + 'metadata.json');
+    labels = model.getClassLabels();
+    log('Model loaded — ' + labels.length + ' classes: ' + labels.join(', '), 'ok');
+
+    buildClassBars();
+    buildFrameDots();
+    buildMapping();
+
+    // Start webcam — flip:true mirrors the image (feels more natural)
+    webcam = new tmImage.Webcam(320, 240, true);
+    await webcam.setup();
+    await webcam.play();
+
+    // Draw webcam to our canvas
+    const canvas = document.getElementById('webcam-canvas');
+    canvas.width  = 320;
+    canvas.height = 240;
+    webcam.canvas = canvas;
+
+    document.getElementById('cam-wrap').classList.add('active');
+    isRunning = true;
+    btn.textContent = '⏹ Stop Camera';
+    btn.disabled = false;
+    setBadge('cam', 'run', 'Running');
+
+    predictionLoop();
+  } catch (e) {
+    btn.textContent = '📷 Start Camera';
+    btn.disabled = false;
+    setBadge('cam', 'err', 'Error');
+    log('Camera error: ' + e.message, 'err');
+    console.error(e);
+  }
+}
+
+async function stopCamera() {
+  isRunning = false;
+  if (webcam) { webcam.stop(); webcam = null; }
+  document.getElementById('cam-wrap').classList.remove('active');
+  document.getElementById('cam-btn').textContent = '📷 Start Camera';
+  setBadge('cam', 'off', 'Off');
+  document.getElementById('cam-label').textContent = '—';
+  document.getElementById('cam-conf').textContent  = '';
+  log('Camera stopped', 'warn');
+}
+
+async function predictionLoop() {
+  if (!isRunning) return;
+
+  webcam.update();   // advance webcam frame
+
+  // Run prediction
+  const preds = await model.predict(webcam.canvas);
+  const thresh = document.getElementById('thresh').value / 100;
+
+  // Update confidence bars
+  preds.forEach((p, i) => {
+    const pct = Math.round(p.probability * 100);
+    const fill  = document.getElementById('bf-' + i);
+    const pctEl = document.getElementById('bp-' + i);
+    if (fill)  { fill.style.width = pct + '%'; fill.className = 'bar-fill' + (p.probability >= thresh ? ' active' : ''); }
+    if (pctEl) pctEl.textContent = pct + '%';
+  });
+
+  // Best class this frame
+  let bestIdx = -1, bestScore = thresh;
+  preds.forEach((p, i) => { if (p.probability > bestScore) { bestScore = p.probability; bestIdx = i; } });
+
+  // ── Frame accumulator ─────────────────────────────────
+  if (bestIdx !== accumIdx) {
+    accumIdx   = bestIdx;
+    accumCount = 0;
+    updateDots(0);
+  }
+
+  if (bestIdx >= 0) {
+    accumCount++;
+    updateDots(accumCount);
+    document.getElementById('cam-label').textContent = labels[bestIdx] || '—';
+    document.getElementById('cam-conf').textContent  = Math.round(bestScore * 100) + '%';
+  } else {
+    document.getElementById('cam-label').textContent = '—';
+    document.getElementById('cam-conf').textContent  = '';
+  }
+
+  // Only fire command after CONFIRM_FRAMES consecutive matching frames
+  if (bestIdx >= 0 && accumCount >= CONFIRM_FRAMES) {
+    const now = Date.now();
+    if (!cooldown[bestIdx] || now - cooldown[bestIdx] >= COOLDOWN_MS) {
+      cooldown[bestIdx] = now;
+      accumCount = 0;
+      updateDots(0);
+
+      const actionKey = cmdMap[bestIdx] || 'none';
+      const action    = ACTIONS[actionKey];
+      if (action && action.cmd) {
+        sendCmd(action.cmd);
+        document.querySelectorAll('.map-table tr').forEach(r => r.classList.remove('detected'));
+        const row = document.getElementById('mr-' + bestIdx);
+        if (row) row.classList.add('detected');
+      }
+    }
+  }
+
+  window.requestAnimationFrame(predictionLoop);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  UI BUILDERS
+// ══════════════════════════════════════════════════════════════
+
+function buildFrameDots() {
+  const max = 8;
+  document.getElementById('frame-dots').innerHTML =
+    Array.from({ length: max }, (_, i) =>
+      `<div class="frame-dot" id="fd-${i}"></div>`
+    ).join('');
+}
+
+function updateDots(filled) {
+  const dots = document.querySelectorAll('.frame-dot');
+  dots.forEach((d, i) => {
+    d.classList.toggle('filled', i < filled);
+  });
+}
+
+function buildClassBars() {
+  document.getElementById('class-bars').innerHTML =
+    labels.map((label, i) => `
+      <div class="bar-item">
+        <div class="bar-header">
+          <span class="bar-label">${label}</span>
+          <span class="bar-pct" id="bp-${i}">0%</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" id="bf-${i}"></div></div>
+      </div>
+    `).join('');
+}
+
+function buildMapping() {
+  // Auto-map by scanning label names for keywords
+  labels.forEach((label, i) => {
+    if (cmdMap[i] != null) return;
+    const lo = label.toLowerCase();
+    let mapped = 'none';
+    for (const [kw, action] of Object.entries(KW_MAP)) {
+      if (lo.includes(kw)) { mapped = action; break; }
+    }
+    cmdMap[i] = mapped;
+  });
+
+  document.getElementById('map-area').innerHTML = `
+    <table class="map-table">
+      <thead>
+        <tr>
+          <th style="width:28px"></th>
+          <th>Gesture class</th>
+          <th>Command</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${labels.map((label, i) => `
+          <tr id="mr-${i}">
+            <td>
+              <div style="width:22px;height:22px;border-radius:5px;background:var(--border);
+                          display:flex;align-items:center;justify-content:center;
+                          font-size:11px;color:var(--muted);">${i + 1}</div>
+            </td>
+            <td style="font-family:monospace;font-size:12px;">${label}</td>
+            <td>
+              <select data-i="${i}" onchange="cmdMap[+this.dataset.i]=this.value">
+                ${Object.entries(ACTIONS).map(([k, v]) =>
+                  `<option value="${k}"${cmdMap[i] === k ? ' selected' : ''}>${v.label}</option>`
+                ).join('')}
+              </select>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <p style="font-size:10px;color:var(--muted);margin-top:8px;">
+      💡 Auto-mapped from class names. Change any dropdown to reassign.
+    </p>
+  `;
+}
+
+function buildServoGrid() {
+  document.getElementById('servo-grid').innerHTML =
+    Object.entries(SERVOS).map(([key, s]) => `
+      <div class="servo-card" id="sc-${key}">
+        <div class="servo-name">${s.label}</div>
+        <div class="servo-pin">Pin ${s.pin}</div>
+        <div class="servo-angle" id="sa-${key}">${s.angle}<span>°</span></div>
+        <div class="servo-bar-track">
+          <div class="servo-bar-fill" id="sb-${key}" style="width:50%"></div>
+        </div>
+        <div class="servo-btn-row">
+          <button class="btn-outline btn-sm" onclick="sendCmd('${qMinus(key)}')">−</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('H')">ctr</button>
+          <button class="btn-outline btn-sm" onclick="sendCmd('${qPlus(key)}')">+</button>
+        </div>
+      </div>
+    `).join('');
+}
+
+function qPlus(k)  { return {claw:'C',elbow:'F',shoulder:'U',base:'R'}[k]; }
+function qMinus(k) { return {claw:'O',elbow:'B',shoulder:'D',base:'L'}[k]; }
+
+function refreshServoUI(key) {
+  const a = SERVOS[key].angle;
+  const el  = document.getElementById('sa-' + key);
+  const bar = document.getElementById('sb-' + key);
+  if (el)  el.innerHTML = a + '<span>°</span>';
+  if (bar) bar.style.width = (a / 180 * 100).toFixed(1) + '%';
+}
+
+function flashCard(key) {
+  const c = document.getElementById('sc-' + key);
+  if (!c) return;
+  c.classList.add('active-cmd');
+  setTimeout(() => c.classList.remove('active-cmd'), 500);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════
+function setBadge(id, type, text) {
+  const el = document.getElementById(id + '-badge');
+  if (!el) return;
+  const cls = { ok:'badge-ok', warn:'badge-warn', err:'badge-err', off:'badge-off', run:'badge-run' };
+  el.className = 'badge ' + (cls[type] || 'badge-off');
+  el.textContent = text;
+}
+
+function log(msg, type = 'info') {
+  const area = document.getElementById('log');
+  const t = new Date().toLocaleTimeString('en-GB');
+  const cls = { ok:'log-ok', warn:'log-warn', err:'log-err', info:'' };
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  row.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${cls[type]||''}">${msg}</span>`;
+  area.prepend(row);
+  while (area.children.length > 80) area.removeChild(area.lastChild);
+}
+
+// Sliders
+document.getElementById('thresh').addEventListener('input', function() {
+  document.getElementById('thresh-val').textContent = this.value + '%';
+});
+document.getElementById('cf-slider').addEventListener('input', function() {
+  CONFIRM_FRAMES = +this.value;
+  document.getElementById('cf-val').textContent = this.value;
+  buildFrameDots();
+});
+
+// ══════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════
+buildServoGrid();
+buildFrameDots();
+log('Ready — connect Arduino, then start camera', 'info');
+
+if (!('serial' in navigator)) {
+  log('⚠ Web Serial not supported — use Chrome or Edge!', 'err');
+  document.getElementById('conn-btn').disabled = true;
+}
+</script>
+</body>
+</html>
